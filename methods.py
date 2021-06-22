@@ -27,6 +27,9 @@ import scipy.stats as ss
 import datetime
 from dateutil.relativedelta import relativedelta
 
+pd.set_option("display.max_rows", None)
+pd.set_option("display.max_columns", None)
+
 
 def fetch_consumers():
     '''Извлечение данных по consumers из методов и агрегация
@@ -157,7 +160,7 @@ def join_tables(data2gis, companies, kgis, bfc, passports):
         frame.drop(['consumerName', 'period', 'address', 'inn', 'volume', 'object_id'], axis=1, inplace=True)
 
     data = data2gis.join(kgis, on='fias').drop_duplicates().join(bfc, on='fias').drop_duplicates().join(passports,
-                                                                                        on='fias').drop_duplicates()
+                                                                                                        on='fias').drop_duplicates()
     data['period'] = data['period'].apply(lambda x: x.replace('.', '-'))
     return data
 
@@ -171,8 +174,8 @@ def fetch_inference_data():
         pd.DataFrame, содержащий данные для предсказаний
     '''
     inference_data = pd.DataFrame(requests.get('http://172.25.170.245:8200/api/PSK/GetLegalConsumersExt').json())
-    inference_data = inference_data[['fias_code', 'object_id', 'type']]
-    inference_data.columns = ['fias', 'object_id', 'consumerName']
+    inference_data = inference_data[['fias_code', 'object_id', 'type', 'value']]
+    inference_data.columns = ['fias', 'object_id', 'consumerName', 'volume']
 
     data2gis = pd.DataFrame(requests.get('http://172.25.170.245:8201/api/DataCompare/GetData2gis').json())
 
@@ -221,7 +224,10 @@ def fetch_inference_data():
     passports = passports[passports.index.isin(inference_data['fias'].values)]
 
     inf_data = inference_data.join(data2gis, on='fias', how='inner').join(kgis, on='fias',
-                    how='inner').join(bfc, on='fias', how='inner').join(passports, on='fias', how='inner')
+                                                                          how='inner').join(bfc, on='fias',
+                                                                                            how='inner').join(passports,
+                                                                                                              on='fias',
+                                                                                                              how='inner')
     return inf_data
 
 
@@ -250,17 +256,17 @@ def expand_by_date(data: pd.DataFrame):
     '''
     matrix = data.values
 
-    matrix_exp = np.empty(shape=(data.shape[0] * 2, matrix.shape[1] - 1), dtype=object)
+    matrix_exp = np.empty(shape=(data.shape[0] * 2, matrix.shape[1]), dtype=object)
     targets = np.empty(shape=(data.shape[0] * 2,), dtype=object)
 
     for (i, j) in zip(range(0, matrix.shape[0] * 2, 2), range(matrix.shape[0])):
-        matrix_exp[i, :] = np.concatenate([matrix[j, :3], np.array([get_month(matrix[j, 4])]), matrix[j, 5:]])
+        matrix_exp[i, :] = np.concatenate([matrix[j, :4], np.array([get_month(matrix[j, 4])]), matrix[j, 5:]])
         matrix_exp[i + 1, :] = np.concatenate(
-            [matrix[j, :3], np.array([get_month(matrix[j, 4], prev=True)]), matrix[j, 5:]])
+            [matrix[j, :4], np.array([get_month(matrix[j, 4], prev=True)]), matrix[j, 5:]])
         targets[i] = 0
         targets[i + 1] = 1
 
-    columns = list(filter(lambda x: x != 'volume', list(data.columns)))
+    columns = data.columns
     data_ext = pd.DataFrame(matrix_exp)
     data_ext.columns = columns
     return data_ext, targets
@@ -314,13 +320,14 @@ def clean(data, is_train=True):
     data['affiliation'] = data['affiliation'].apply(lambda x: np.nan if x == 'none' else x)
     data['affiliation'].fillna(value=np.max(data[data['affiliation'].notna()]['affiliation'].values), inplace=True)
 
+    data['shortCharacteristic'] = data['shortCharacteristic'].apply(lambda x: np.nan if x == ' ' or x == '' else x)
     data['shortCharacteristic'] = data['shortCharacteristic'].apply(lambda x: np.nan if x == '-' else x)
     data['shortCharacteristic'] = data['shortCharacteristic'].apply(lambda x: np.nan if x == '' else x)
     data['shortCharacteristic'] = data['shortCharacteristic'].apply(lambda x: np.nan if x == 'примечание' else x)
     data['shortCharacteristic'] = data['shortCharacteristic'].apply(lambda x: np.nan if x == '9 крылец п' else x)
     data['shortCharacteristic'].fillna(value='отсутствует', inplace=True)
 
-    data['typeBuilding'] = data['typeBuilding'].apply(lambda x: np.nan if x == '' else x)
+    data['typeBuilding'] = data['typeBuilding'].apply(lambda x: np.nan if x == '' or x == ' ' else x)
     data['typeBuilding'].fillna(value='отсутствует', inplace=True)
 
     data['signElectrification'].fillna(
@@ -365,7 +372,7 @@ def clean(data, is_train=True):
     data['dataBuildingdate'] = data['dataBuildingdate'].apply(lambda x: int(x))
 
     data['dataBuildingarea'] = data['dataBuildingarea'].apply(lambda x: float(x) if isinstance(x, str) else x)
-    data['dataBuildingarea'] = data['dataBuildingarea'].fillna(
+    data['dataBuildingarea'].fillna(
         value=np.mean(data[data['dataBuildingarea'].notna()]['dataBuildingarea'].values), inplace=True)
 
     data['dataLivingarea'] = data['dataLivingarea'].apply(lambda x: x.replace(' ', '') if isinstance(x, str) else x)
@@ -381,7 +388,8 @@ def clean(data, is_train=True):
                                inplace=True)
     data['dataStoreys'] = data['dataStoreys'].apply(lambda x: int(x))
 
-    data['dataResidents'] = data['dataResidents'].apply(lambda x: int(float(x.replace(',', '.'))) if isinstance(x, str) else x)
+    data['dataResidents'] = data['dataResidents'].apply(
+        lambda x: int(float(x.replace(',', '.'))) if isinstance(x, str) else x)
     data['dataResidents'].fillna(value=data[data['dataResidents'].notna()]['dataResidents'].value_counts().index[0],
                                  inplace=True)
     data['dataResidents'] = data['dataResidents'].apply(lambda x: int(x))
@@ -414,7 +422,8 @@ def clean(data, is_train=True):
     data['flatType'] = data['flatType'].apply(lambda x: x.strip())
 
     data['outcleanAll'] = data['outcleanAll'].apply(lambda x: x.lower() if isinstance(x, str) else x)
-    data['outcleanAll'] = data['outcleanAll'].apply(lambda x: np.nan if isinstance(x, str) and 'жилкомсервис' in x else x)
+    data['outcleanAll'] = data['outcleanAll'].apply(
+        lambda x: np.nan if isinstance(x, str) and 'жилкомсервис' in x else x)
     data['outcleanAll'] = data['outcleanAll'].apply(
         lambda x: float(x.replace(' ', '').strip()) if isinstance(x, str) else x)
     data['outcleanAll'].fillna(value=np.mean(data[data['outcleanAll'].notna()]['outcleanAll'].values).round(),
@@ -425,6 +434,9 @@ def clean(data, is_train=True):
     data['specialBasementarea'].fillna(
         value=np.mean(data[data['specialBasementarea'].notna()]['specialBasementarea'].values).round(),
         inplace=True)
+
+    data['volume'] = data['volume'].apply(lambda x: '96460.00' if x == '96,460.00' else x)
+    data['volume'] = data['volume'].apply(lambda x: float(x))
 
     if is_train:
         data['period'].fillna(value=data[data['period'].notna()]['period'].value_counts().index[0],
@@ -441,15 +453,15 @@ def cramers_v(x, y):
     Returns:
         float значение корреляции
     '''
-    confusion_matrix = pd.crosstab(x,y)
+    confusion_matrix = pd.crosstab(x, y)
     chi2 = ss.chi2_contingency(confusion_matrix)[0]
     n = confusion_matrix.sum().sum()
-    phi2 = chi2/n
-    r,k = confusion_matrix.shape
-    phi2corr = max(0, phi2-((k-1)*(r-1))/(n-1))
-    rcorr = r-((r-1)**2)/(n-1)
-    kcorr = k-((k-1)**2)/(n-1)
-    return np.sqrt(phi2corr/min((kcorr-1),(rcorr-1)))
+    phi2 = chi2 / n
+    r, k = confusion_matrix.shape
+    phi2corr = max(0, phi2 - ((k - 1) * (r - 1)) / (n - 1))
+    rcorr = r - ((r - 1) ** 2) / (n - 1)
+    kcorr = k - ((k - 1) ** 2) / (n - 1)
+    return np.sqrt(phi2corr / min((kcorr - 1), (rcorr - 1)))
 
 
 def num_binary_corr(data_targ, feat: str):
@@ -466,13 +478,17 @@ def num_binary_corr(data_targ, feat: str):
 
 
 num_feats = ['period', 'floors', 'add_info', 'parkings', 'signElectrification', 'quantity', 'longitude', 'latitude',
-             'living_area', 'age', 'elev_num', 'floor_num', 'flat_num', 'is_gas', 'dataBuildingdate', 'dataBuildingarea', 'dataLivingarea',
-             'dataStairs', 'dataStoreys', 'dataResidents', 'engHeatingcentral', 'engHeatingauto', 'engHotwater', 'engHotwatergas',
-             'engGascentral', 'engRefusechute', 'outcleanAll', 'specialBasementarea']
+             'living_area', 'age', 'elev_num', 'floor_num', 'flat_num', 'is_gas', 'dataBuildingdate',
+             'dataBuildingarea', 'dataLivingarea',
+             'dataStairs', 'dataStoreys', 'dataResidents', 'engHeatingcentral', 'engHeatingauto', 'engHotwater',
+             'engHotwatergas',
+             'engGascentral', 'engRefusechute', 'outcleanAll', 'specialBasementarea', 'volume']
 
-cat_feats = ['consumerName', 'information', 'affiliation', 'shortCharacteristic', 'typeBuilding', 'addrDistrict', 'commType', 'dataSeries', 'flatType']
+cat_feats = ['consumerName', 'information', 'affiliation', 'shortCharacteristic', 'typeBuilding', 'addrDistrict',
+             'commType', 'dataSeries', 'flatType']
 
-binary_feats = ['signElectrification', 'is_gas', 'engHeatingcentral', 'engHeatingauto', 'engHotwater', 'engHotwatergas', 'engGascentral',
+binary_feats = ['signElectrification', 'is_gas', 'engHeatingcentral', 'engHeatingauto', 'engHotwater', 'engHotwatergas',
+                'engGascentral',
                 'engRefusechute']
 
 train_feats = num_feats + cat_feats
