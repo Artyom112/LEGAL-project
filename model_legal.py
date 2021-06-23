@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from catboost import CatBoostClassifier, CatBoostError
 from sklearn.model_selection import train_test_split
 import os
-from methods import *
+from methods_legal import *
 
 
 class LegalModel:

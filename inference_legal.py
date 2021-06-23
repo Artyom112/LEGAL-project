@@ -1,5 +1,5 @@
 from catboost import CatBoostClassifier
-from methods import *
+from methods_legal import *
 import os
 
 
